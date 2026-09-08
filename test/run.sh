@@ -13,6 +13,8 @@ run_case() {
     local out="test/out/${name}.log"
 
     printf '%-28s ' "$name"
+    rm -f fs.img
+    make -s fs.img >/dev/null 2>&1
     # shellcheck disable=SC2086
     ./test/xv6.exp "$boot_to" "$cmd_to" "$cpus" $cmds > "$out" 2>&1
     local rc=$?
@@ -48,10 +50,14 @@ run_case() {
     fi
 }
 
-WANTED="${1:-all}"
+WANTED="${*:-all}"
 
 want() {
-    [ "$WANTED" = "all" ] || [ "$WANTED" = "$1" ]
+    case " $WANTED " in
+        *" all "*) return 0 ;;
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
 }
 
 echo "building"
