@@ -184,6 +184,9 @@ pde_t*          copyuvm(pde_t*, uint);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
+int             lazyalloc(pde_t*, uint);
+int             pagefault(uint, uint);
+int             freemem(void);
 void            clearpteu(pde_t *pgdir, char *uva);
 
 // number of elements in fixed-size array

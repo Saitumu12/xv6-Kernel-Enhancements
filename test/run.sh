@@ -21,7 +21,7 @@ run_case() {
     if [ $rc -ne 0 ]; then
         problems+=("harness exit $rc")
     fi
-    if grep -qE "panic|unexpected trap|kernel fault" "$out"; then
+    if grep -qE "panic|unexpected trap|kernel page fault" "$out"; then
         problems+=("kernel panic or unexpected trap")
     fi
     if grep -q "FAIL" "$out"; then

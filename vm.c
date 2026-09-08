@@ -216,6 +216,44 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
   return 0;
 }
 
+int
+lazyalloc(pde_t *pgdir, uint va)
+{
+  char *mem;
+  uint a;
+
+  a = PGROUNDDOWN(va);
+  if((mem = kalloc()) == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+  if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+    kfree(mem);
+    return -1;
+  }
+  invlpg(a);
+  return 0;
+}
+
+int
+pagefault(uint va, uint err)
+{
+  struct proc *p = myproc();
+  pte_t *pte;
+
+  if(p == 0 || va >= KERNBASE)
+    return -1;
+
+  pte = walkpgdir(p->pgdir, (void*)va, 0);
+
+  if(pte == 0 || (*pte & PTE_P) == 0){
+    if(va >= p->sz)
+      return -1;
+    return lazyalloc(p->pgdir, va);
+  }
+
+  return -1;
+}
+
 // Allocate page tables and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 int
@@ -324,9 +362,9 @@ copyuvm(pde_t *pgdir, uint sz)
     return 0;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
-      panic("copyuvm: pte should exist");
+      continue;
     if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
+      continue;
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -352,6 +390,8 @@ uva2ka(pde_t *pgdir, char *uva)
   pte_t *pte;
 
   pte = walkpgdir(pgdir, uva, 0);
+  if(pte == 0)
+    return 0;
   if((*pte & PTE_P) == 0)
     return 0;
   if((*pte & PTE_U) == 0)

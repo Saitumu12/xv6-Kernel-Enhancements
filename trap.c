@@ -78,6 +78,19 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
+  case T_PGFLT:
+    if(pagefault(rcr2(), tf->err) == 0)
+      break;
+    if(myproc() == 0 || (tf->cs&3) == 0){
+      cprintf("kernel page fault: eip 0x%x addr 0x%x err %d cpu %d\n",
+              tf->eip, rcr2(), tf->err, cpuid());
+      panic("kernel page fault");
+    }
+    cprintf("pid %d %s: page fault addr 0x%x err %d eip 0x%x--kill proc\n",
+            myproc()->pid, myproc()->name, rcr2(), tf->err, tf->eip);
+    myproc()->killed = 1;
+    break;
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){

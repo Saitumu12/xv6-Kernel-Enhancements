@@ -47,13 +47,26 @@ sys_sbrk(void)
 {
   int addr;
   int n;
+  struct proc *curproc = myproc();
 
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  if(growproc(n) < 0)
+  addr = curproc->sz;
+  if(n < 0){
+    if(growproc(n) < 0)
+      return -1;
+    return addr;
+  }
+  if(curproc->sz + n >= KERNBASE || curproc->sz + n < curproc->sz)
     return -1;
+  curproc->sz += n;
   return addr;
+}
+
+int
+sys_freemem(void)
+{
+  return freemem();
 }
 
 int
