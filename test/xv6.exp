@@ -1,0 +1,39 @@
+#!/usr/bin/expect -f
+
+set boot_timeout [lindex $argv 0]
+set cmd_timeout [lindex $argv 1]
+set cpus [lindex $argv 2]
+set commands [lrange $argv 3 end]
+
+set timeout $boot_timeout
+
+spawn qemu-system-i386 -nographic \
+    -drive file=fs.img,index=1,media=disk,format=raw \
+    -drive file=xv6.img,index=0,media=disk,format=raw \
+    -smp $cpus -m 512
+
+expect {
+    "init: starting sh" {}
+    timeout { puts "\nHARNESS: timed out waiting for init"; exit 2 }
+    eof { puts "\nHARNESS: qemu exited during boot"; exit 2 }
+}
+
+expect {
+    "$ " {}
+    timeout { puts "\nHARNESS: timed out waiting for first prompt"; exit 2 }
+}
+
+set timeout $cmd_timeout
+
+foreach cmd $commands {
+    send "$cmd\r"
+    expect {
+        "$ " {}
+        timeout { puts "\nHARNESS: timed out running '$cmd'"; exit 3 }
+        eof { puts "\nHARNESS: qemu exited running '$cmd'"; exit 3 }
+    }
+}
+
+send "\001x"
+expect eof
+exit 0
