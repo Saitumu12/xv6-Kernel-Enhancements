@@ -5,10 +5,12 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "spinlock.h"
 #include "elf.h"
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
+struct spinlock cowlock;
 
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
@@ -140,6 +142,7 @@ setupkvm(void)
 void
 kvmalloc(void)
 {
+  initlock(&cowlock, "cow");
   kpgdir = setupkvm();
   switchkvm();
 }
@@ -251,6 +254,9 @@ pagefault(uint va, uint err)
     return lazyalloc(p->pgdir, va);
   }
 
+  if((err & FEC_WR) && (*pte & PTE_COW))
+    return cowfault(p->pgdir, va);
+
   return -1;
 }
 
@@ -348,15 +354,14 @@ clearpteu(pde_t *pgdir, char *uva)
   *pte &= ~PTE_U;
 }
 
-// Given a parent process's page table, create a copy
-// of it for a child.
+// Given a parent process's page table, build a child page table that shares
+// the parent's physical pages copy-on-write.
 pde_t*
-copyuvm(pde_t *pgdir, uint sz)
+cowuvm(pde_t *pgdir, uint sz)
 {
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
-  char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
@@ -365,20 +370,66 @@ copyuvm(pde_t *pgdir, uint sz)
       continue;
     if(!(*pte & PTE_P))
       continue;
+    if(*pte & PTE_W){
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+    }
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
+    incref(pa);
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) {
+      kfree(P2V(pa));
       goto bad;
     }
   }
+  lcr3(V2P(pgdir));
   return d;
 
 bad:
   freevm(d);
+  lcr3(V2P(pgdir));
+  return 0;
+}
+
+int
+cowfault(pde_t *pgdir, uint va)
+{
+  pte_t *pte;
+  uint pa, flags;
+  char *mem;
+
+  if(va >= KERNBASE)
+    return -1;
+
+  acquire(&cowlock);
+
+  pte = walkpgdir(pgdir, (void*)va, 0);
+  if(pte == 0 || (*pte & PTE_P) == 0 || (*pte & PTE_COW) == 0){
+    release(&cowlock);
+    return -1;
+  }
+
+  pa = PTE_ADDR(*pte);
+  flags = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+
+  if(getref(pa) == 1){
+    *pte = pa | flags;
+    invlpg(PGROUNDDOWN(va));
+    release(&cowlock);
+    return 0;
+  }
+
+  if((mem = kalloc()) == 0){
+    release(&cowlock);
+    return -1;
+  }
+
+  memmove(mem, (char*)P2V(pa), PGSIZE);
+  *pte = V2P(mem) | flags;
+  kfree(P2V(pa));
+  invlpg(PGROUNDDOWN(va));
+
+  release(&cowlock);
   return 0;
 }
 

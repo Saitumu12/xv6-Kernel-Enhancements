@@ -170,6 +170,7 @@ UPROGS=\
 	_echo\
 	_forktest\
 	_lazytest\
+	_cowtest\
 	_grep\
 	_init\
 	_kill\

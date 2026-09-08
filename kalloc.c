@@ -17,11 +17,29 @@ struct run {
   struct run *next;
 };
 
+#define NFRAMES (PHYSTOP >> PTXSHIFT)
+#define PA2IDX(pa) ((pa) >> PTXSHIFT)
+
 struct {
   struct spinlock lock;
   int use_lock;
   struct run *freelist;
+  ushort ref[NFRAMES];
 } kmem;
+
+static void
+kmem_lock(void)
+{
+  if(kmem.use_lock)
+    acquire(&kmem.lock);
+}
+
+static void
+kmem_unlock(void)
+{
+  if(kmem.use_lock)
+    release(&kmem.lock);
+}
 
 // Initialization happens in two phases.
 // 1. main() calls kinit1() while still using entrypgdir to place just
@@ -48,8 +66,37 @@ freerange(void *vstart, void *vend)
 {
   char *p;
   p = (char*)PGROUNDUP((uint)vstart);
-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)vend; p += PGSIZE){
+    kmem.ref[PA2IDX(V2P(p))] = 1;
     kfree(p);
+  }
+}
+
+void
+incref(uint pa)
+{
+  if(pa >= PHYSTOP)
+    panic("incref: out of range");
+
+  kmem_lock();
+  if(kmem.ref[PA2IDX(pa)] == 0)
+    panic("incref: page is free");
+  kmem.ref[PA2IDX(pa)]++;
+  kmem_unlock();
+}
+
+int
+getref(uint pa)
+{
+  int n;
+
+  if(pa >= PHYSTOP)
+    panic("getref: out of range");
+
+  kmem_lock();
+  n = kmem.ref[PA2IDX(pa)];
+  kmem_unlock();
+  return n;
 }
 //PAGEBREAK: 21
 // Free the page of physical memory pointed at by v,
@@ -60,20 +107,31 @@ void
 kfree(char *v)
 {
   struct run *r;
+  uint idx;
+  int last;
 
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
+  idx = PA2IDX(V2P(v));
+
+  kmem_lock();
+  if(kmem.ref[idx] == 0)
+    panic("kfree: page has no references");
+  last = (--kmem.ref[idx] == 0);
+  kmem_unlock();
+
+  if(!last)
+    return;
+
   // Fill with junk to catch dangling refs.
   memset(v, 1, PGSIZE);
 
-  if(kmem.use_lock)
-    acquire(&kmem.lock);
+  kmem_lock();
   r = (struct run*)v;
   r->next = kmem.freelist;
   kmem.freelist = r;
-  if(kmem.use_lock)
-    release(&kmem.lock);
+  kmem_unlock();
 }
 
 int
@@ -99,13 +157,13 @@ kalloc(void)
 {
   struct run *r;
 
-  if(kmem.use_lock)
-    acquire(&kmem.lock);
+  kmem_lock();
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
-  if(kmem.use_lock)
-    release(&kmem.lock);
+    kmem.ref[PA2IDX(V2P((char*)r))] = 1;
+  }
+  kmem_unlock();
   return (char*)r;
 }
 

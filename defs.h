@@ -180,13 +180,16 @@ int             deallocuvm(pde_t*, uint, uint);
 void            freevm(pde_t*);
 void            inituvm(pde_t*, char*, uint);
 int             loaduvm(pde_t*, char*, struct inode*, uint, uint);
-pde_t*          copyuvm(pde_t*, uint);
+pde_t*          cowuvm(pde_t*, uint);
+int             cowfault(pde_t*, uint);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 int             lazyalloc(pde_t*, uint);
 int             pagefault(uint, uint);
 int             freemem(void);
+void            incref(uint);
+int             getref(uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 
 // number of elements in fixed-size array

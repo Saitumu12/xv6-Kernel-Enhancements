@@ -95,6 +95,12 @@ struct segdesc {
 #define PTE_W           0x002   // Writeable
 #define PTE_U           0x004   // User
 #define PTE_PS          0x080   // Page Size
+#define PTE_COW         0x800   // Copy-on-write (software bit)
+
+// Page fault error code bits pushed by the CPU
+#define FEC_PR          0x1     // fault was a protection violation
+#define FEC_WR          0x2     // fault was caused by a write
+#define FEC_U           0x4     // fault happened in user mode
 
 // Address in page table or page directory entry
 #define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
