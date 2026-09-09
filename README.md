@@ -1,4 +1,4 @@
-# Kernel Enhancements: Virtual Memory, Scheduling and Threads
+# xv6 Kernel Enhancements: Virtual Memory, Scheduling and Threads
 
 Four substantial additions to a Unix-like x86 kernel, written in C: copy-on-write
 fork with per-frame reference counting, a page fault handler that resolves both
