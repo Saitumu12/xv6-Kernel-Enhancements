@@ -56,6 +56,9 @@ struct proc {
   int waited;                  // Ticks spent waiting in a run queue
   int rqcpu;                   // Run queue this process belongs to
   struct proc *rqnext;         // Next process in that run queue
+
+  int isthread;                // Shares its parent's address space
+  void *ustack;                // User stack given to clone, returned by join
 };
 
 // Process memory is laid out contiguously, low addresses first:

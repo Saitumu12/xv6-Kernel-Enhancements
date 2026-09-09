@@ -28,6 +28,10 @@ int setpriority(int);
 int getpriority(void);
 int getcpu(void);
 int getncpu(void);
+int clone(void (*fn)(void*), void *arg, void *stack);
+int join(void **stack);
+int futex_wait(void *addr, int expected);
+int futex_wake(void *addr, int n);
 
 // ulib.c
 int stat(const char*, struct stat*);

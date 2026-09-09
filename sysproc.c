@@ -60,6 +60,7 @@ sys_sbrk(void)
   if(curproc->sz + n >= KERNBASE || curproc->sz + n < curproc->sz)
     return -1;
   curproc->sz += n;
+  syncsize();
   return addr;
 }
 
@@ -83,6 +84,54 @@ int
 sys_getpriority(void)
 {
   return getpriority();
+}
+
+int
+sys_clone(void)
+{
+  int fn, arg, stack;
+
+  if(argint(0, &fn) < 0 || argint(1, &arg) < 0 || argint(2, &stack) < 0)
+    return -1;
+  return clone((void(*)(void*))fn, (void*)arg, (void*)stack);
+}
+
+int
+sys_join(void)
+{
+  char *p;
+  void *stack;
+  int r;
+
+  if(argptr(0, &p, sizeof(void*)) < 0)
+    return -1;
+  r = join(&stack);
+  if(r < 0)
+    return -1;
+  *(void**)p = stack;
+  return r;
+}
+
+int
+sys_futex_wait(void)
+{
+  char *addr;
+  int expected;
+
+  if(argptr(0, &addr, 4) < 0 || argint(1, &expected) < 0)
+    return -1;
+  return futex_wait(addr, expected);
+}
+
+int
+sys_futex_wake(void)
+{
+  char *addr;
+  int n;
+
+  if(argptr(0, &addr, 4) < 0 || argint(1, &n) < 0)
+    return -1;
+  return futex_wake(addr, n);
 }
 
 int

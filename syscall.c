@@ -89,6 +89,10 @@ extern int sys_setpriority(void);
 extern int sys_getpriority(void);
 extern int sys_getcpu(void);
 extern int sys_getncpu(void);
+extern int sys_clone(void);
+extern int sys_join(void);
+extern int sys_futex_wait(void);
+extern int sys_futex_wake(void);
 extern int sys_dup(void);
 extern int sys_exec(void);
 extern int sys_exit(void);
@@ -136,6 +140,10 @@ static int (*syscalls[])(void) = {
 [SYS_getpriority] sys_getpriority,
 [SYS_getcpu]  sys_getcpu,
 [SYS_getncpu] sys_getncpu,
+[SYS_clone]   sys_clone,
+[SYS_join]    sys_join,
+[SYS_futex_wait] sys_futex_wait,
+[SYS_futex_wake] sys_futex_wake,
 };
 
 void

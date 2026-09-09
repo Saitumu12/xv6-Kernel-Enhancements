@@ -210,6 +210,9 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->pgdir = 0;
+  p->isthread = 0;
+  p->ustack = 0;
   p->base_prio = NPRIO / 2;
   p->prio = p->base_prio;
   p->slice = quantum_for(p->prio);
@@ -299,6 +302,7 @@ growproc(int n)
       return -1;
   }
   curproc->sz = sz;
+  syncsize();
   switchuvm(curproc);
   return 0;
 }
@@ -312,6 +316,9 @@ fork(void)
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
+
+  if(addrspace_shared())
+    return -1;
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -351,6 +358,198 @@ fork(void)
   release(&ptable.lock);
 
   return pid;
+}
+
+static int
+pgdir_users(pde_t *pgdir)
+{
+  struct proc *p;
+  int n = 0;
+
+  if(pgdir == 0)
+    return 0;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    if(p->state != UNUSED && p->pgdir == pgdir)
+      n++;
+  return n;
+}
+
+int
+addrspace_shared(void)
+{
+  int n;
+
+  acquire(&ptable.lock);
+  n = pgdir_users(myproc()->pgdir);
+  release(&ptable.lock);
+  return n > 1;
+}
+
+void
+syncsize(void)
+{
+  struct proc *q;
+  struct proc *curproc = myproc();
+
+  acquire(&ptable.lock);
+  for(q = ptable.proc; q < &ptable.proc[NPROC]; q++)
+    if(q != curproc && q->state != UNUSED && q->pgdir == curproc->pgdir)
+      q->sz = curproc->sz;
+  release(&ptable.lock);
+}
+
+int
+clone(void (*fn)(void*), void *arg, void *stack)
+{
+  int i, pid;
+  struct proc *np;
+  struct proc *curproc = myproc();
+  uint sp;
+
+  if((uint)stack % PGSIZE != 0)
+    return -1;
+  if((uint)stack >= curproc->sz || (uint)stack + PGSIZE > curproc->sz)
+    return -1;
+
+  if((np = allocproc()) == 0)
+    return -1;
+
+  np->pgdir = curproc->pgdir;
+  np->sz = curproc->sz;
+  np->parent = curproc;
+  np->isthread = 1;
+  np->ustack = stack;
+  np->base_prio = curproc->base_prio;
+  np->prio = np->base_prio;
+  *np->tf = *curproc->tf;
+
+  sp = (uint)stack + PGSIZE;
+  sp -= 4;
+  *(uint*)sp = (uint)arg;
+  sp -= 4;
+  *(uint*)sp = 0xffffffff;
+
+  np->tf->eip = (uint)fn;
+  np->tf->esp = sp;
+  np->tf->eax = 0;
+
+  for(i = 0; i < NOFILE; i++)
+    if(curproc->ofile[i])
+      np->ofile[i] = filedup(curproc->ofile[i]);
+  np->cwd = idup(curproc->cwd);
+
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  pid = np->pid;
+
+  acquire(&ptable.lock);
+  np->state = RUNNABLE;
+  rq_push(least_loaded_cpu(), np);
+  release(&ptable.lock);
+
+  return pid;
+}
+
+int
+join(void **stack)
+{
+  struct proc *p;
+  struct proc *curproc = myproc();
+  int havethreads, pid;
+  void *found;
+
+  acquire(&ptable.lock);
+  for(;;){
+    havethreads = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent != curproc || !p->isthread)
+        continue;
+      havethreads = 1;
+      if(p->state == ZOMBIE){
+        pid = p->pid;
+        found = p->ustack;
+        kfree(p->kstack);
+        p->kstack = 0;
+        p->pgdir = 0;
+        p->isthread = 0;
+        p->ustack = 0;
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        release(&ptable.lock);
+        if(stack)
+          *stack = found;
+        return pid;
+      }
+    }
+
+    if(!havethreads || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    sleep(curproc, &ptable.lock);
+  }
+}
+
+int
+futex_wait(void *addr, int expected)
+{
+  struct proc *curproc = myproc();
+  uint pa;
+
+  if((uint)addr % 4 != 0 || (uint)addr + 4 > curproc->sz)
+    return -1;
+
+  if(*(volatile int*)addr != expected)
+    return 0;
+
+  pa = uva2pa(curproc->pgdir, (uint)addr);
+  if(pa == 0)
+    return -1;
+
+  acquire(&ptable.lock);
+  if(*(volatile int*)addr != expected){
+    release(&ptable.lock);
+    return 0;
+  }
+  curproc->chan = (void*)pa;
+  curproc->state = SLEEPING;
+  sched();
+  curproc->chan = 0;
+  release(&ptable.lock);
+  return 0;
+}
+
+int
+futex_wake(void *addr, int n)
+{
+  struct proc *p;
+  struct proc *curproc = myproc();
+  uint pa;
+  int woken = 0;
+
+  if((uint)addr % 4 != 0 || (uint)addr + 4 > curproc->sz)
+    return -1;
+
+  pa = uva2pa(curproc->pgdir, (uint)addr);
+  if(pa == 0)
+    return 0;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == SLEEPING && p->chan == (void*)pa){
+      p->state = RUNNABLE;
+      rq_push(p->rqcpu, p);
+      woken++;
+      if(n > 0 && woken >= n)
+        break;
+    }
+  }
+  release(&ptable.lock);
+  return woken;
 }
 
 // Exit the current process.  Does not return.
@@ -421,7 +620,11 @@ wait(void)
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        if(p->pgdir && pgdir_users(p->pgdir) == 1)
+          freevm(p->pgdir);
+        p->pgdir = 0;
+        p->isthread = 0;
+        p->ustack = 0;
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;

@@ -267,6 +267,24 @@ repeated_forks_do_not_leak(void)
   sbrk(-(32 * PGSIZE));
 }
 
+static void
+concurrent_fork_storm_does_not_leak(void)
+{
+  int before, after, i, j;
+
+  before = freemem();
+  for(i = 0; i < 10; i++){
+    for(j = 0; j < 4; j++){
+      if(fork() == 0)
+        exit();
+    }
+    for(j = 0; j < 4; j++)
+      wait();
+  }
+  after = freemem();
+  check(after >= before - SLACK, "overlapping fork and exit cycles leak nothing");
+}
+
 int
 main(void)
 {
@@ -280,6 +298,7 @@ main(void)
   kernel_write_to_a_shared_page_copies();
   three_levels_of_sharing();
   repeated_forks_do_not_leak();
+  concurrent_fork_storm_does_not_leak();
 
   after = freemem();
   check(after >= before - SLACK, "no pages leaked overall");

@@ -25,3 +25,7 @@
 #define SYS_getpriority 24
 #define SYS_getcpu 25
 #define SYS_getncpu 26
+#define SYS_clone 27
+#define SYS_join 28
+#define SYS_futex_wait 29
+#define SYS_futex_wake 30

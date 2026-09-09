@@ -151,6 +151,10 @@ _%: %.o $(ULIB)
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
 
+_threadtest: threadtest.o uthread.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o _threadtest threadtest.o uthread.o $(ULIB)
+	$(OBJDUMP) -S _threadtest > threadtest.asm
+
 _forktest: forktest.o $(ULIB)
 	# forktest has less library code linked in - needs to be small
 	# in order to be able to max out the proc table.
@@ -173,6 +177,7 @@ UPROGS=\
 	_lazytest\
 	_cowtest\
 	_schedtest\
+	_threadtest\
 	_grep\
 	_init\
 	_kill\

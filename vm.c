@@ -10,7 +10,7 @@
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
-struct spinlock cowlock;
+struct spinlock vmlock;
 
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
@@ -142,7 +142,7 @@ setupkvm(void)
 void
 kvmalloc(void)
 {
-  initlock(&cowlock, "cow");
+  initlock(&vmlock, "vm");
   kpgdir = setupkvm();
   switchkvm();
 }
@@ -219,6 +219,17 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
   return 0;
 }
 
+uint
+uva2pa(pde_t *pgdir, uint va)
+{
+  pte_t *pte;
+
+  pte = walkpgdir(pgdir, (void*)va, 0);
+  if(pte == 0 || (*pte & PTE_P) == 0)
+    return 0;
+  return PTE_ADDR(*pte) | (va & 0xFFF);
+}
+
 int
 kmap_extend(uint pa, uint len)
 {
@@ -264,21 +275,37 @@ pagefault(uint va, uint err)
 {
   struct proc *p = myproc();
   pte_t *pte;
+  int r;
 
   if(p == 0 || va >= KERNBASE)
     return -1;
 
+  acquire(&vmlock);
+
   pte = walkpgdir(p->pgdir, (void*)va, 0);
 
   if(pte == 0 || (*pte & PTE_P) == 0){
-    if(va >= p->sz)
+    if(va >= p->sz){
+      release(&vmlock);
       return -1;
-    return lazyalloc(p->pgdir, va);
+    }
+    r = lazyalloc(p->pgdir, va);
+    release(&vmlock);
+    return r;
   }
 
-  if((err & FEC_WR) && (*pte & PTE_COW))
-    return cowfault(p->pgdir, va);
+  if((err & FEC_WR) && (*pte & PTE_COW)){
+    r = cowfault(p->pgdir, va);
+    release(&vmlock);
+    return r;
+  }
 
+  if((err & FEC_WR) && (*pte & PTE_W)){
+    release(&vmlock);
+    return 0;
+  }
+
+  release(&vmlock);
   return -1;
 }
 
@@ -420,16 +447,11 @@ cowfault(pde_t *pgdir, uint va)
   uint pa, flags;
   char *mem;
 
-  if(va >= KERNBASE)
-    return -1;
-
-  acquire(&cowlock);
-
   pte = walkpgdir(pgdir, (void*)va, 0);
-  if(pte == 0 || (*pte & PTE_P) == 0 || (*pte & PTE_COW) == 0){
-    release(&cowlock);
+  if(pte == 0 || (*pte & PTE_P) == 0)
     return -1;
-  }
+  if((*pte & PTE_COW) == 0)
+    return (*pte & PTE_W) ? 0 : -1;
 
   pa = PTE_ADDR(*pte);
   flags = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
@@ -437,21 +459,17 @@ cowfault(pde_t *pgdir, uint va)
   if(getref(pa) == 1){
     *pte = pa | flags;
     invlpg(PGROUNDDOWN(va));
-    release(&cowlock);
     return 0;
   }
 
-  if((mem = kalloc()) == 0){
-    release(&cowlock);
+  if((mem = kalloc()) == 0)
     return -1;
-  }
 
   memmove(mem, (char*)P2V(pa), PGSIZE);
   *pte = V2P(mem) | flags;
   kfree(P2V(pa));
   invlpg(PGROUNDDOWN(va));
 
-  release(&cowlock);
   return 0;
 }
 
