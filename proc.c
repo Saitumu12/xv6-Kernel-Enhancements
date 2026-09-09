@@ -12,6 +12,15 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+struct runqueue {
+  struct proc *head[NPRIO];
+  struct proc *tail[NPRIO];
+  int nready;
+};
+
+static struct runqueue runq[NCPU];
+static uint last_aged;
+
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -24,6 +33,119 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+}
+
+static int
+quantum_for(int prio)
+{
+  return QUANTUM_BASE * (NPRIO - prio);
+}
+
+static void
+rq_push(int cpu, struct proc *p)
+{
+  struct runqueue *rq = &runq[cpu];
+  int prio = p->prio;
+
+  p->rqnext = 0;
+  p->rqcpu = cpu;
+  if(rq->tail[prio])
+    rq->tail[prio]->rqnext = p;
+  else
+    rq->head[prio] = p;
+  rq->tail[prio] = p;
+  rq->nready++;
+}
+
+static struct proc*
+rq_pop(int cpu)
+{
+  struct runqueue *rq = &runq[cpu];
+  struct proc *p;
+  int prio;
+
+  for(prio = 0; prio < NPRIO; prio++){
+    if((p = rq->head[prio]) != 0){
+      rq->head[prio] = p->rqnext;
+      if(rq->head[prio] == 0)
+        rq->tail[prio] = 0;
+      p->rqnext = 0;
+      rq->nready--;
+      return p;
+    }
+  }
+  return 0;
+}
+
+static int
+least_loaded_cpu(void)
+{
+  int i, best = 0, bestn;
+
+  bestn = runq[0].nready;
+  for(i = 1; i < ncpu; i++){
+    if(runq[i].nready < bestn){
+      bestn = runq[i].nready;
+      best = i;
+    }
+  }
+  return best;
+}
+
+static struct proc*
+rq_steal(int self)
+{
+  int i, best = -1, bestn = 1;
+
+  for(i = 0; i < ncpu; i++){
+    if(i == self)
+      continue;
+    if(runq[i].nready > bestn){
+      bestn = runq[i].nready;
+      best = i;
+    }
+  }
+  if(best < 0)
+    return 0;
+  return rq_pop(best);
+}
+
+static void
+rq_age(uint elapsed)
+{
+  struct proc *pending[NPROC];
+  struct proc *p;
+  int c, n, i;
+
+  for(c = 0; c < ncpu; c++){
+    n = 0;
+    while(n < NPROC && (p = rq_pop(c)) != 0)
+      pending[n++] = p;
+    for(i = 0; i < n; i++){
+      p = pending[i];
+      p->waited += elapsed;
+      if(p->waited >= AGING_TICKS && p->prio > 0){
+        p->prio--;
+        p->waited = 0;
+      }
+      rq_push(c, p);
+    }
+  }
+}
+
+void
+scheduler_tick(uint now)
+{
+  uint elapsed;
+
+  if(now - last_aged < AGING_INTERVAL)
+    return;
+
+  acquire(&ptable.lock);
+  elapsed = now - last_aged;
+  last_aged = now;
+  rq_age(elapsed);
+  release(&ptable.lock);
 }
 
 // Must be called with interrupts disabled
@@ -88,6 +210,12 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->base_prio = NPRIO / 2;
+  p->prio = p->base_prio;
+  p->slice = quantum_for(p->prio);
+  p->waited = 0;
+  p->rqcpu = 0;
+  p->rqnext = 0;
 
   release(&ptable.lock);
 
@@ -149,6 +277,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  rq_push(least_loaded_cpu(), p);
 
   release(&ptable.lock);
 }
@@ -198,6 +327,8 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+  np->base_prio = curproc->base_prio;
+  np->prio = np->base_prio;
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -215,6 +346,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  rq_push(least_loaded_cpu(), np);
 
   release(&ptable.lock);
 
@@ -324,17 +456,29 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  int id;
+
   c->proc = 0;
-  
+  id = cpuid();
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+    p = rq_pop(id);
+    if(p == 0)
+      p = rq_steal(id);
+
+    if(p != 0){
       if(p->state != RUNNABLE)
-        continue;
+        panic("scheduler: queued process is not runnable");
+
+      p->rqcpu = id;
+      p->prio = p->base_prio;
+      p->waited = 0;
+      p->slice = quantum_for(p->prio);
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
@@ -350,8 +494,8 @@ scheduler(void)
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
-    release(&ptable.lock);
 
+    release(&ptable.lock);
   }
 }
 
@@ -381,12 +525,35 @@ sched(void)
   mycpu()->intena = intena;
 }
 
+int
+setpriority(int prio)
+{
+  struct proc *p = myproc();
+
+  if(prio < 0 || prio >= NPRIO)
+    return -1;
+
+  acquire(&ptable.lock);
+  p->base_prio = prio;
+  p->prio = prio;
+  p->slice = quantum_for(prio);
+  release(&ptable.lock);
+  return 0;
+}
+
+int
+getpriority(void)
+{
+  return myproc()->base_prio;
+}
+
 // Give up the CPU for one scheduling round.
 void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  rq_push(cpuid(), myproc());
   sched();
   release(&ptable.lock);
 }
@@ -460,8 +627,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+      rq_push(p->rqcpu, p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -486,8 +655,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
         p->state = RUNNABLE;
+        rq_push(p->rqcpu, p);
+      }
       release(&ptable.lock);
       return 0;
     }

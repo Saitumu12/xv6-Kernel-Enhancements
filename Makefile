@@ -1,4 +1,5 @@
 OBJS = \
+	acpi.o\
 	bio.o\
 	console.o\
 	exec.o\
@@ -171,6 +172,7 @@ UPROGS=\
 	_forktest\
 	_lazytest\
 	_cowtest\
+	_schedtest\
 	_grep\
 	_init\
 	_kill\

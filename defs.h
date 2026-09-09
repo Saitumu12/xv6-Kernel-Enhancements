@@ -120,6 +120,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int             setpriority(int);
+int             getpriority(void);
+void            scheduler_tick(uint);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -188,6 +191,8 @@ int             copyout(pde_t*, uint, void*, uint);
 int             lazyalloc(pde_t*, uint);
 int             pagefault(uint, uint);
 int             freemem(void);
+int             acpiinit(void);
+int             kmap_extend(uint, uint);
 void            incref(uint);
 int             getref(uint);
 void            clearpteu(pde_t *pgdir, char *uva);

@@ -220,6 +220,28 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
 }
 
 int
+kmap_extend(uint pa, uint len)
+{
+  uint a, start, end;
+  pte_t *pte;
+
+  start = PGROUNDDOWN(pa);
+  end = PGROUNDUP(pa + len);
+
+  if(end <= start || KERNBASE + end >= DEVSPACE)
+    return -1;
+
+  for(a = start; a < end; a += PGSIZE){
+    if((pte = walkpgdir(kpgdir, (void*)(KERNBASE + a), 1)) == 0)
+      return -1;
+    if(*pte & PTE_P)
+      continue;
+    *pte = a | PTE_P | PTE_W;
+  }
+  return 0;
+}
+
+int
 lazyalloc(pde_t *pgdir, uint va)
 {
   char *mem;

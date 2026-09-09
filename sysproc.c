@@ -70,6 +70,39 @@ sys_freemem(void)
 }
 
 int
+sys_setpriority(void)
+{
+  int prio;
+
+  if(argint(0, &prio) < 0)
+    return -1;
+  return setpriority(prio);
+}
+
+int
+sys_getpriority(void)
+{
+  return getpriority();
+}
+
+int
+sys_getncpu(void)
+{
+  return ncpu;
+}
+
+int
+sys_getcpu(void)
+{
+  int id;
+
+  pushcli();
+  id = cpuid();
+  popcli();
+  return id;
+}
+
+int
 sys_sleep(void)
 {
   int n;

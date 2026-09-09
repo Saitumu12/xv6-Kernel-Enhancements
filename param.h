@@ -11,4 +11,8 @@
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
+#define NPRIO           4  // number of scheduling priority levels
+#define QUANTUM_BASE    2  // timer ticks per quantum at the lowest priority
+#define AGING_INTERVAL  5  // ticks between aging passes
+#define AGING_TICKS    10  // ticks a process may wait before it is boosted
 

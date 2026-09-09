@@ -85,6 +85,10 @@ argstr(int n, char **pp)
 extern int sys_chdir(void);
 extern int sys_close(void);
 extern int sys_freemem(void);
+extern int sys_setpriority(void);
+extern int sys_getpriority(void);
+extern int sys_getcpu(void);
+extern int sys_getncpu(void);
 extern int sys_dup(void);
 extern int sys_exec(void);
 extern int sys_exit(void);
@@ -128,6 +132,10 @@ static int (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_freemem] sys_freemem,
+[SYS_setpriority] sys_setpriority,
+[SYS_getpriority] sys_getpriority,
+[SYS_getcpu]  sys_getcpu,
+[SYS_getncpu] sys_getncpu,
 };
 
 void
